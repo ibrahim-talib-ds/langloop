@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 
 import '../services/auth_service.dart';
-import '../theme/app_theme.dart';
-import '../theme/theme_controller.dart';
-import 'rating_screen.dart';
 
 class VideoRoomScreen extends StatefulWidget {
   const VideoRoomScreen({
@@ -25,13 +22,18 @@ class VideoRoomScreen extends StatefulWidget {
 }
 
 class _VideoRoomScreenState extends State<VideoRoomScreen> {
-  final int appID = 1052798588; 
-  final String appSign = "252667blc0b1be5fdl35ldbac95d9922c950ac0"; 
+  final int appID = 1052798588;
+  final String appSign = "252667b1c0b1be5fd1351dbac95d9922c950ac0460e07caef0dd7d191cf5c177";
+
+  // Zego only allows letters, numbers, and underscores in IDs.
+  // This strips out the hyphens from your UUIDs.
+  String _sanitize(String raw) => raw.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '');
 
   @override
   Widget build(BuildContext context) {
     final me = AuthService.instance.user;
-    final myId = me?['id'].toString() ?? '';
+    final myId = _sanitize(me?['id'].toString() ?? '');
+    final roomId = _sanitize(widget.matchId);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -41,7 +43,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
           appSign: appSign,
           userID: myId,
           userName: me?['full_name'] ?? 'User',
-          callID: widget.matchId, // Both users use the MatchID as the room!
+          callID: roomId,
           config: ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall(),
         ),
       ),
