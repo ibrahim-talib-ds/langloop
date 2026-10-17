@@ -3,26 +3,88 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_client.dart';
 
-/
-      },
-      onError: (e) {
-        _emit('error', e.toString());
-      },
-    );
+typedef SignalCallback = void Function(String event, dynamic data);
 
-    ─── 3) Build peer connection ───
+class WebRtcService {
+  WebRtcService();
+
+  RTCPeerConnection? _pc;
+  MediaStream? _localStream;
+  MediaStream? _remoteStream;
+  SignalCallback? onEvent;
+
+  String? _myUserId;
+  String? _partnerId;
+  bool _isOfferer = false;
+  bool _connected = false;
+
+  final List<RTCIceCandidate> _pendingCandidates = [];
+  Timer? _pollTimer;
+  bool _isPolling = false;
+
+  MediaStream? get localStream => _localStream;
+  MediaStream? get remoteStream => _remoteStream;
+  bool get connected => _connected;
+  bool get isOfferer => _isOfferer;
+
+  static const _iceServers = {
+    'iceServers': [
+      {
+        'urls': [
+          'stun:stun.relay.metered.ca:80',
+          'stun:stun.l.google.com:19302',
+        ],
+      },
+      {
+        'urls': 'turn:global.relay.metered.ca:80',
+        'username': '32d974cc6eb5071979c7d59c',
+        'credential': 'OAThjOf+iRmKGB9U',
+      },
+      {
+        'urls': 'turn:global.relay.metered.ca:443',
+        'username': '32d974cc6eb5071979c7d59c',
+        'credential': 'OAThjOf+iRmKGB9U',
+      },
+      {
+        'urls': 'turns:global.relay.metered.ca:443?transport=tcp',
+        'username': '32d974cc6eb5071979c7d59c',
+        'credential': 'OAThjOf+iRmKGB9U',
+      },
+    ],
+  };
+
+  Future<void> connect({
+    required String myUserId,
+    required String partnerId,
+    required String topic,
+  }) async {
+    _myUserId = myUserId;
+    _partnerId = partnerId;
+
+    final mediaConstraints = {
+      'audio': true,
+      'video': {
+        'mandatory': {
+          'minWidth': '640',
+          'minHeight': '480',
+          'minFrameRate': '24',
+        },
+        'facingMode': 'user',
+        'optional': [],
+      },
+    };
+    _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    _emit('localStream', _localStream);
+
     _pc = await createPeerConnection(_iceServers);
 
-    Local tracks into peer connection
     for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
 
-    Remote stream hook
     _remoteStream = await createLocalMediaStream('remote');
     _pc!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
@@ -31,10 +93,9 @@ import 'api_client.dart';
       }
     };
 
-    ICE candidates → send to peer over WS
     _pc!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      _sendSignal('ice', _partnerId!, candidate: {
+      _sendSignal('ice', {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
@@ -45,121 +106,142 @@ import 'api_client.dart';
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _connected = true;
         _emit('connected', true);
-      } else if (state ==
-              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         _connected = false;
         _emit('disconnected', true);
       }
     };
 
-    ─── 4) Decide who creates the offer ───
-    Lower user id creates the offer so both sides agree deterministically.
     _isOfferer = (myUserId.compareTo(partnerId) < 0);
+    
+    // Start polling BEFORE sending offer
+    _startPolling();
+
     if (_isOfferer) {
+      // Wait a moment to ensure the other side is polling
+      await Future.delayed(const Duration(milliseconds: 500));
       await _createAndSendOffer();
+    }
+  }
+
+  void _startPolling() {
+    if (_isPolling) return;
+    _isPolling = true;
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (!_isPolling) return;
+      try {
+        final res = await ApiClient.instance.get('/signal-poll/receive');
+        final list = res['data'] is List ? res['data'] as List : [];
+        for (final msg in list) {
+          await _handleSignal(msg as Map<String, dynamic>);
+        }
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _handleSignal(Map<String, dynamic> data) async {
+    final type = data['type'];
+    if (_pc == null) return;
+
+    try {
+      if (type == 'offer') {
+        await _pc!.setRemoteDescription(
+          RTCSessionDescription(data['sdp'], data['sdpType']),
+        );
+        final answer = await _pc!.createAnswer();
+        await _pc!.setLocalDescription(answer);
+        _sendSignal('answer', {
+          'sdp': answer.sdp,
+          'sdpType': answer.type,
+        });
+        
+        // Apply any queued candidates
+        for (final c in _pendingCandidates) {
+          await _pc!.addCandidate(c);
+        }
+        _pendingCandidates.clear();
+        
+      } else if (type == 'answer') {
+        await _pc!.setRemoteDescription(
+          RTCSessionDescription(data['sdp'], data['sdpType']),
+        );
+        for (final c in _pendingCandidates) {
+          await _pc!.addCandidate(c);
+        }
+        _pendingCandidates.clear();
+        
+      } else if (type == 'ice') {
+        final c = data['candidate'];
+        if (c == null) return;
+        final candidate = RTCIceCandidate(
+          c['candidate'] as String?,
+          c['sdpMid'] as String?,
+          c['sdpMLineIndex'] as int?,
+        );
+        if (await _pc!.getRemoteDescription() != null) {
+          await _pc!.addCandidate(candidate);
+        } else {
+          _pendingCandidates.add(candidate);
+        }
+      }
+    } catch (e) {
+      dev.log('Signal handle error: $e');
     }
   }
 
   Future<void> _createAndSendOffer() async {
     final offer = await _pc!.createOffer();
     await _pc!.setLocalDescription(offer);
-    _sendSignal('offer', _partnerId!, sdp: offer.sdp, sdpType: offer.type);
+    _sendSignal('offer', {
+      'sdp': offer.sdp,
+      'sdpType': offer.type,
+    });
   }
 
-  Future<void> _onWsMessage(dynamic raw) async {
-    try {
-      final data = jsonDecode(raw as String) as Map<String, dynamic>;
-      final type = data['type'] as String?;
-
-      switch (type) {
-        case 'offer':
-          await _pc!.setRemoteDescription(
-            RTCSessionDescription(data['sdp'], data['sdpType'] ?? 'offer'),
-          );
-          final answer = await _pc!.createAnswer();
-          await _pc!.setLocalDescription(answer);
-          _sendSignal('answer', _partnerId!, sdp: answer.sdp, sdpType: answer.type);
-          break;
-
-        case 'answer':
-          await _pc!.setRemoteDescription(
-            RTCSessionDescription(data['sdp'], data['sdpType'] ?? 'answer'),
-          );
-          Apply any queued ICE candidates
-          for (final c in _pendingCandidates) {
-            await _pc!.addCandidate(c);
-          }
-          _pendingCandidates.clear();
-          break;
-
-        case 'ice':
-          final c = data['candidate'];
-          if (c == null) break;
-          final candidate = RTCIceCandidate(
-            c['candidate'] as String?,
-            c['sdpMid'] as String?,
-            c['sdpMLineIndex'] as int?,
-          );
-          if (await _pc!.getRemoteDescription() != null) {
-            await _pc!.addCandidate(candidate);
-          } else {
-            _pendingCandidates.add(candidate);
-          }
-          break;
-
-        case 'peer-online':
-          _emit('peerOnline', true);
-          break;
-
-        case 'peer-offline':
-          _emit('peerOffline', true);
-          break;
-
-        case 'hangup':
-          _emit('hangup', true);
-          break;
-      }
-    } catch (e) {
-      dev.log('WS msg error: $e');
-    }
+  void _sendSignal(String type, Map<String, dynamic> payload) {
+    if (_partnerId == null) return;
+    ApiClient.instance.post('/signal-poll/send', body: {
+      'type': type,
+      'to': _partnerId!,
+      ...payload,
+    });
   }
 
-  void _send(Map<String, dynamic> msg) {
-    try {
-      _channel?.sink.add(jsonEncode(msg));
-    } catch (e) {
-      dev.log('send failed: $e');
-    }
-  }
-
-  ─── Local controls ───
   void toggleMic(bool on) {
-    final tracks = _localStream?.getAudioTracks() ?? [];
-    for (final t in tracks) {
+    for (final t in _localStream?.getAudioTracks() ?? []) {
       t.enabled = on;
     }
   }
 
   void toggleCamera(bool on) {
-    final tracks = _localStream?.getVideoTracks() ?? [];
-    for (final t in tracks) {
+    for (final t in _localStream?.getVideoTracks() ?? []) {
       t.enabled = on;
     }
   }
 
-  
-
-  /Send hangup to peer, then close everything.
-  Future<void> hangup() async {
+  Future<bool> switchCamera() async {
     try {
-      _send({'type': 'hangup', 'to': _partnerId});
-    } catch (_) {}
+      final tracks = _localStream?.getVideoTracks() ?? [];
+      if (tracks.isEmpty) return false;
+      await Helper.switchCamera(tracks.first);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> hangup() async {
     await dispose();
   }
 
   Future<void> dispose() async {
     _connected = false;
+    _isPolling = false;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+
     try {
       await _pc?.close();
     } catch (_) {}
@@ -177,71 +259,9 @@ import 'api_client.dart';
       await _remoteStream?.dispose();
     } catch (_) {}
     _remoteStream = null;
-
-    try {
-      await _channel?.sink.close();
-    } catch (_) {}
-    _channel = null;
   }
 
   void _emit(String event, dynamic data) {
     onEvent?.call(event, data);
   }
-
-  /Switch between front and back camera (mobile only).
-  Future<bool> switchCamera() async {
-    try {
-      final tracks = _localStream?.getVideoTracks() ?? [];
-      if (tracks.isEmpty) return false;
-      await Helper.switchCamera(tracks.first);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-
-  Timer? _pollTimer;
-  
-  void _startPolling() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      try {
-        final res = await ApiClient.instance.get('/signal-poll/receive');
-        if (res['data'] is List) {
-          for (final msg in (res['data'] as List)) {
-            await _handleSignal(msg);
-          }
-        }
-      } catch (_) {}
-    });
-  }
-
-  Future<void> _handleSignal(Map<String, dynamic> data) async {
-    final type = data['type'];
-    if (type == 'offer' && _pc != null) {
-      await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], data['sdpType']));
-      final answer = await _pc!.createAnswer();
-      await _pc!.setLocalDescription(answer);
-      _sendSignal('answer', data['from'], sdp: answer.sdp, sdpType: answer.type);
-    } else if (type == 'answer' && _pc != null) {
-      await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], data['sdpType']));
-    } else if (type == 'ice' && _pc != null) {
-      final c = data['candidate'];
-      if (c != null) {
-        await _pc!.addCandidate(RTCIceCandidate(c['candidate'], c['sdpMid'], c['sdpMLineIndex']));
-      }
-    }
-  }
-
-  void _sendSignal(String type, String to, {String? sdp, String? sdpType, Map<String, dynamic>? candidate}) {
-    ApiClient.instance.post('/signal-poll/send', body: {
-      'type': type,
-      'to': to,
-      'sdp': sdp,
-      'sdpType': sdpType,
-      'candidate': candidate,
-    });
-  }
-
 }
