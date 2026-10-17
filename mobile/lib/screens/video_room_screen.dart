@@ -42,6 +42,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
   bool _friendAdded = false;
   bool _selfEnlarged = false;
   bool _switchingCamera = false;
+  bool _soundEnabled = false;
 
   int _secondsLeft = 300;
   Timer? _timer;
@@ -244,6 +245,37 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                 ),
               ),
             ),
+
+            // Tap to enable sound overlay
+            if (!_soundEnabled)
+              Positioned(
+                top: 100, left: 0, right: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() => _soundEnabled = true);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: context.colors.primary,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.volume_up, color: context.colors.primaryFg),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Tap to enable sound',
+                            style: TextStyle(color: context.colors.primaryFg, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
 
             // Top Bar
             Positioned(

@@ -65,7 +65,7 @@ class WebRtcService {
     _partnerId = partnerId;
 
     final mediaConstraints = {
-      'audio': true,
+      'audio': {'mandatory': {'echoCancellation': true, 'noiseSuppression': true}, 'optional': []},
       'video': {
         'mandatory': {
           'minWidth': '640',
@@ -106,6 +106,10 @@ class WebRtcService {
     _pc!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
+        // Force audio track to be enabled
+        for (final track in _remoteStream!.getAudioTracks()) {
+          track.enabled = true;
+        }
         _emit('remoteStream', _remoteStream);
       }
     };
