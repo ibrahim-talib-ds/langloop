@@ -92,11 +92,11 @@ class WebRtcService {
     if (token == null) throw StateError('Not authenticated');
     // Using HTTP Polling instead of WebSocket for Render Free tier
     _startPolling();
-    dev.log('WS connect → $url');
-    _channel = WebSocketChannel.connect(Uri.parse(url));
-    await _channel!.ready;
+    dev.log('Using HTTP Polling for signaling');
+    
+    
 
-    _channel!.stream.listen(
+    // 
       _onWsMessage,
       onDone: () {
         _emit('wsClosed', null);

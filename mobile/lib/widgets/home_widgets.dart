@@ -61,20 +61,9 @@ class AvatarCircle extends StatelessWidget {
                     : Image.network(
                         imageUrl!.startsWith('http')
                             ? imageUrl!
-                            : '${const String.fromEnvironment("API_BASE", defaultValue: "https://langloop-tv47.onrender.com")}${imageUrl!}',
+                            : 'https://langloop-tv47.onrender.com$imageUrl',
                         fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Center(
-                      child: Text(
-                        _initials,
-                        style: TextStyle(
-                          color: c.text,
-                          fontSize: size * 0.36,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                    ),
-                  )
+                      ))
                 : Center(
                     child: Text(
                       _initials,
