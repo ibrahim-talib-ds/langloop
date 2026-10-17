@@ -7,114 +7,22 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_client.dart';
 
-/// Event callback so the UI can react.
-typedef SignalCallback = void Function(String event, dynamic data);
-
-class WebRtcService {
-  WebRtcService();
-
-  WebSocketChannel? _channel;
-  RTCPeerConnection? _pc;
-  MediaStream? _localStream;
-  MediaStream? _remoteStream;
-
-  SignalCallback? onEvent;
-
-  String? _partnerId;
-  bool _isOfferer = false;
-  bool _connected = false;
-
-  final List<RTCIceCandidate> _pendingCandidates = [];
-
-  // ─── Public state ───
-  MediaStream? get localStream => _localStream;
-  MediaStream? get remoteStream => _remoteStream;
-  bool get connected => _connected;
-  bool get isOfferer => _isOfferer;
-
-  static const _iceServers = {
-    'iceServers': [
-      {
-        'urls': [
-          'stun:stun.relay.metered.ca:80',
-          'stun:stun.l.google.com:19302',
-        ],
-      },
-      {
-        'urls': 'turn:global.relay.metered.ca:80',
-        'username': '32d974cc6eb5071979c7d59c',
-        'credential': 'OAThjOf+iRmKGB9U',
-      },
-      {
-        'urls': 'turn:global.relay.metered.ca:443',
-        'username': '32d974cc6eb5071979c7d59c',
-        'credential': 'OAThjOf+iRmKGB9U',
-      },
-      {
-        'urls': 'turn:global.relay.metered.ca:443?transport=tcp',
-        'username': '32d974cc6eb5071979c7d59c',
-        'credential': 'OAThjOf+iRmKGB9U',
-      },
-      {
-        'urls': 'turns:global.relay.metered.ca:443?transport=tcp',
-        'username': '32d974cc6eb5071979c7d59c',
-        'credential': 'OAThjOf+iRmKGB9U',
-      },
-    ],
-  };
-
-  /// Called once when the video room opens.
-  Future<void> connect({
-    required String myUserId,
-    required String partnerId,
-    required String topic,
-  }) async {
-    _partnerId = partnerId;
-
-    // ─── 1) Get local media ───
-    final mediaConstraints = {
-      'audio': true,
-      'video': {
-        'mandatory': {
-          'minWidth': '640',
-          'minHeight': '480',
-          'minFrameRate': '24',
-        },
-        'facingMode': 'user',
-        'optional': [],
-      },
-    };
-    _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-    _emit('localStream', _localStream);
-
-    // ─── 2) Open WebSocket ───
-    final token = ApiClient.instance.token;
-    if (token == null) throw StateError('Not authenticated');
-    // Using HTTP Polling instead of WebSocket for Render Free tier
-    _startPolling();
-    dev.log('Using HTTP Polling for signaling');
-    
-    
-
-    // 
-      _onWsMessage,
-      onDone: () {
-        _emit('wsClosed', null);
+/
       },
       onError: (e) {
         _emit('error', e.toString());
       },
     );
 
-    // ─── 3) Build peer connection ───
+    ─── 3) Build peer connection ───
     _pc = await createPeerConnection(_iceServers);
 
-    // Local tracks into peer connection
+    Local tracks into peer connection
     for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
 
-    // Remote stream hook
+    Remote stream hook
     _remoteStream = await createLocalMediaStream('remote');
     _pc!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
@@ -123,7 +31,7 @@ class WebRtcService {
       }
     };
 
-    // ICE candidates → send to peer over WS
+    ICE candidates → send to peer over WS
     _pc!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
       _sendSignal('ice', _partnerId!, candidate: {
@@ -145,8 +53,8 @@ class WebRtcService {
       }
     };
 
-    // ─── 4) Decide who creates the offer ───
-    // Lower user id creates the offer so both sides agree deterministically.
+    ─── 4) Decide who creates the offer ───
+    Lower user id creates the offer so both sides agree deterministically.
     _isOfferer = (myUserId.compareTo(partnerId) < 0);
     if (_isOfferer) {
       await _createAndSendOffer();
@@ -178,7 +86,7 @@ class WebRtcService {
           await _pc!.setRemoteDescription(
             RTCSessionDescription(data['sdp'], data['sdpType'] ?? 'answer'),
           );
-          // Apply any queued ICE candidates
+          Apply any queued ICE candidates
           for (final c in _pendingCandidates) {
             await _pc!.addCandidate(c);
           }
@@ -225,7 +133,7 @@ class WebRtcService {
     }
   }
 
-  // ─── Local controls ───
+  ─── Local controls ───
   void toggleMic(bool on) {
     final tracks = _localStream?.getAudioTracks() ?? [];
     for (final t in tracks) {
@@ -242,7 +150,7 @@ class WebRtcService {
 
   
 
-  /// Send hangup to peer, then close everything.
+  /Send hangup to peer, then close everything.
   Future<void> hangup() async {
     try {
       _send({'type': 'hangup', 'to': _partnerId});
@@ -280,7 +188,7 @@ class WebRtcService {
     onEvent?.call(event, data);
   }
 
-  /// Switch between front and back camera (mobile only).
+  /Switch between front and back camera (mobile only).
   Future<bool> switchCamera() async {
     try {
       final tracks = _localStream?.getVideoTracks() ?? [];
