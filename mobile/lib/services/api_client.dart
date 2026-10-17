@@ -11,7 +11,7 @@ class ApiClient {
   // For Flutter Web on Chrome: localhost works.
   // For Android emulator: use 10.0.2.2 instead of localhost.
   // For physical device: use your computer's LAN IP.
-  String baseUrl = 'https://booth-mhz-deemed-greatly.trycloudflare.com/api/v1';
+  String baseUrl = 'https://langloop-tv47.onrender.com/api/v1';
 
   String? token;
 

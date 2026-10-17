@@ -1,5 +1,7 @@
+// ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
+import 'dart:async';
 import 'dart:js' as js;
-import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
@@ -10,6 +12,8 @@ import '../theme/theme_controller.dart';
 
 const _webClientId =
     '968349205228-fo3a6mih0msmvbrq1l32e1iirc35e2f3.apps.googleusercontent.com';
+
+bool _gsiInitialized = false;
 
 class GoogleSignInButton extends StatelessWidget {
   const GoogleSignInButton({
@@ -29,51 +33,82 @@ class GoogleSignInButton extends StatelessWidget {
   }
 
   Future<void> _handleWeb(BuildContext context) async {
-    js.context.callMethod('eval', [
-      """
-      window.llGoogleSuccess = function(response) {
-        try {
-          var token = response.credential;
-          window.llGoogleToken = token;
-        } catch(e) {
-          window.llGoogleToken = null;
+    if (!_gsiInitialized) {
+      js.context.callMethod('eval', [
+        r"""
+        window.__llGoogleResolvers = [];
+        window.llGoogleCallback = function(response) {
+          try {
+            var token = response && response.credential ? response.credential : null;
+            var r = window.__llGoogleResolvers.shift();
+            if (r) r(token);
+          } catch (e) {
+            var r = window.__llGoogleResolvers.shift();
+            if (r) r(null);
+          }
+        };
+        if (window.google && window.google.accounts) {
+          google.accounts.id.initialize({
+            client_id: '""" + _webClientId + r"""',
+            callback: window.llGoogleCallback,
+            auto_select: false,
+            cancel_on_tap_outside: true,
+            use_fedcm_for_prompt: true
+          });
+          window.__llGsiReady = true;
+        } else {
+          window.__llGsiReady = false;
         }
-      };
-      
-      if (!window.google || !window.google.accounts) {
-         window.llGoogleToken = 'ERROR_SCRIPT';
-         return;
-      }
-
-      google.accounts.id.initialize({
-        client_id: '$_webClientId',
-        callback: window.llGoogleSuccess,
-        auto_select: false
-      });
-      
-      google.accounts.id.prompt();
-      """
-    ]);
-
-    // Poll for the token every 500ms (up to 30 seconds)
-    String? token;
-    for (int i = 0; i < 60; i++) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      final result = js.context['llGoogleToken'];
-      if (result != null) {
-        if (result == 'ERROR_SCRIPT') {
-           if (context.mounted) _showError(context, 'Google Script not loaded.');
-           return;
-        }
-        token = result as String;
-        js.context['llGoogleToken'] = null; // clear it
-        break;
-      }
+        """,
+      ]);
+      _gsiInitialized = true;
     }
 
+    final ready = js.context['__llGsiReady'] == true;
+    if (!ready) {
+      if (!context.mounted) return;
+      _snack(
+        context,
+        'Google Sign-In script not loaded. Refresh the page and try again.',
+      );
+      return;
+    }
+
+    js.context.callMethod('eval', [
+      """
+      window.__llGooglePromise = new Promise(function(resolve) {
+        window.__llGoogleResolvers.push(resolve);
+      });
+      google.accounts.id.prompt();
+      """,
+    ]);
+
+    final completer = Completer<String?>();
+    Timer(const Duration(seconds: 25), () {
+      if (!completer.isCompleted) completer.complete(null);
+    });
+
+    Timer.periodic(const Duration(milliseconds: 300), (t) async {
+      if (completer.isCompleted) {
+        t.cancel();
+        return;
+      }
+      final result = js.context['__llLastCredential'];
+      if (result != null && result is String && result.isNotEmpty) {
+        js.context['__llLastCredential'] = null;
+        if (!completer.isCompleted) completer.complete(result);
+        t.cancel();
+      }
+    });
+
+    final token = await completer.future;
     if (!context.mounted) return;
-    if (token == null || token.isEmpty) {
-      _showError(context, 'Sign-in timed out. Try again.');
+    if (token == null) {
+      _snack(
+        context,
+        'Google Sign-In did not complete. Make sure you\'re signed into '
+        'Google in another tab, then try again.',
+      );
       return;
     }
     await _finish(context, token);
@@ -81,22 +116,24 @@ class GoogleSignInButton extends StatelessWidget {
 
   Future<void> _finish(BuildContext context, String idToken) async {
     try {
-      final res = await GoogleAuthService.instance.exchangeWithBackend(idToken);
+      final res =
+          await GoogleAuthService.instance.exchangeWithBackend(idToken);
       final token = res['access_token'] as String;
       await AuthService.instance.loginWithToken(token);
       await onSignedIn();
     } catch (e) {
       if (!context.mounted) return;
-      _showError(context, 'Google sign-in failed: $e');
+      _snack(context, 'Google sign-in failed: $e');
     }
   }
 
-  void _showError(BuildContext context, String msg) {
+  void _snack(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
         behavior: SnackBarBehavior.floating,
         backgroundColor: context.colors.surface,
+        duration: const Duration(seconds: 5),
       ),
     );
   }

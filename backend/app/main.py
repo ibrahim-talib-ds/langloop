@@ -14,6 +14,8 @@ from app.api.v1 import billing as billing_router
 from app.api.v1 import geo as geo_router
 from app.api.v1 import friends as friends_router
 from app.api.v1 import match as match_router
+from app.api.v1 import ws_fallback as signal_poll_router
+from app.api.v1 import ws_fallback as signal_router
 from app.api.v1 import support as support_router
 from app.api.v1 import me as me_router
 from app.api.v1 import referrals as referrals_router
@@ -93,6 +95,8 @@ app.include_router(users_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_activity_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(match_router.router, prefix=settings.API_V1_PREFIX)
+app.include_router(signal_poll_router.router, prefix=settings.API_V1_PREFIX)
+app.include_router(signal_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(friends_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(support_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(me_router.router, prefix=settings.API_V1_PREFIX)

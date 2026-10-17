@@ -1,3 +1,4 @@
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -52,11 +53,16 @@ class AvatarCircle extends StatelessWidget {
             ),
             clipBehavior: Clip.antiAlias,
             child: imageUrl != null && imageUrl!.isNotEmpty
-                ? Image.network(
-                    imageUrl!.startsWith('http')
-                        ? imageUrl!
-                        : '${const String.fromEnvironment("API_BASE", defaultValue: "http://localhost:8001")}${imageUrl!}',
-                    fit: BoxFit.cover,
+                ? (imageUrl!.startsWith('data:image')
+                    ? Image.memory(
+                        base64Decode(imageUrl!.split(',').last),
+                        fit: BoxFit.cover,
+                      )
+                    : Image.network(
+                        imageUrl!.startsWith('http')
+                            ? imageUrl!
+                            : '${const String.fromEnvironment("API_BASE", defaultValue: "https://langloop-tv47.onrender.com")}${imageUrl!}',
+                        fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Center(
                       child: Text(
                         _initials,

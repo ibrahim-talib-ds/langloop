@@ -90,10 +90,8 @@ class WebRtcService {
     // ─── 2) Open WebSocket ───
     final token = ApiClient.instance.token;
     if (token == null) throw StateError('Not authenticated');
-    final wsBase = ApiClient.instance.baseUrl
-        .replaceFirst('http', 'ws')
-        .replaceFirst('/api/v1', '');
-    final url = '$wsBase/api/v1/ws/signal?token=$token';
+    // Using HTTP Polling instead of WebSocket for Render Free tier
+    _startPolling();
     dev.log('WS connect → $url');
     _channel = WebSocketChannel.connect(Uri.parse(url));
     await _channel!.ready;
@@ -128,14 +126,10 @@ class WebRtcService {
     // ICE candidates → send to peer over WS
     _pc!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      _send({
-        'type': 'ice',
-        'to': _partnerId,
-        'candidate': {
-          'candidate': candidate.candidate,
-          'sdpMid': candidate.sdpMid,
-          'sdpMLineIndex': candidate.sdpMLineIndex,
-        },
+      _sendSignal('ice', _partnerId!, candidate: {
+        'candidate': candidate.candidate,
+        'sdpMid': candidate.sdpMid,
+        'sdpMLineIndex': candidate.sdpMLineIndex,
       });
     };
 
@@ -162,12 +156,7 @@ class WebRtcService {
   Future<void> _createAndSendOffer() async {
     final offer = await _pc!.createOffer();
     await _pc!.setLocalDescription(offer);
-    _send({
-      'type': 'offer',
-      'to': _partnerId,
-      'sdp': offer.sdp,
-      'sdpType': offer.type,
-    });
+    _sendSignal('offer', _partnerId!, sdp: offer.sdp, sdpType: offer.type);
   }
 
   Future<void> _onWsMessage(dynamic raw) async {
@@ -182,12 +171,7 @@ class WebRtcService {
           );
           final answer = await _pc!.createAnswer();
           await _pc!.setLocalDescription(answer);
-          _send({
-            'type': 'answer',
-            'to': _partnerId,
-            'sdp': answer.sdp,
-            'sdpType': answer.type,
-          });
+          _sendSignal('answer', _partnerId!, sdp: answer.sdp, sdpType: answer.type);
           break;
 
         case 'answer':
@@ -306,6 +290,50 @@ class WebRtcService {
     } catch (_) {
       return false;
     }
+  }
+
+
+  Timer? _pollTimer;
+  
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      try {
+        final res = await ApiClient.instance.get('/signal-poll/receive');
+        if (res['data'] is List) {
+          for (final msg in (res['data'] as List)) {
+            await _handleSignal(msg);
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _handleSignal(Map<String, dynamic> data) async {
+    final type = data['type'];
+    if (type == 'offer' && _pc != null) {
+      await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], data['sdpType']));
+      final answer = await _pc!.createAnswer();
+      await _pc!.setLocalDescription(answer);
+      _sendSignal('answer', data['from'], sdp: answer.sdp, sdpType: answer.type);
+    } else if (type == 'answer' && _pc != null) {
+      await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], data['sdpType']));
+    } else if (type == 'ice' && _pc != null) {
+      final c = data['candidate'];
+      if (c != null) {
+        await _pc!.addCandidate(RTCIceCandidate(c['candidate'], c['sdpMid'], c['sdpMLineIndex']));
+      }
+    }
+  }
+
+  void _sendSignal(String type, String to, {String? sdp, String? sdpType, Map<String, dynamic>? candidate}) {
+    ApiClient.instance.post('/signal-poll/send', body: {
+      'type': type,
+      'to': to,
+      'sdp': sdp,
+      'sdpType': sdpType,
+      'candidate': candidate,
+    });
   }
 
 }
