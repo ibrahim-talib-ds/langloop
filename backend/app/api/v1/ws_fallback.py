@@ -20,14 +20,14 @@ class SignalMessage(BaseModel):
 def send_signal(msg: SignalMessage, current: User = Depends(get_current_user)):
     key = f"signal:{msg.to}"
     data = {"from": str(current.id), **msg.model_dump()}
-    redis_client.lpush(key, json.dumps(data))
+    redis_client.rpush(key, json.dumps(data))
     redis_client.expire(key, 60)
     return {"ok": True}
 
 @router.get("/receive")
 def receive_signals(current: User = Depends(get_current_user)):
     key = f"signal:{current.id}"
-    items = redis_client.lrange(key, 0, -1)
+    pipe = redis_client.pipeline(); pipe.lrange(key, 0, -1); pipe.delete(key); items = pipe.execute()[0]
     if items:
         redis_client.delete(key)
     return [json.loads(i) for i in items]

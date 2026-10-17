@@ -129,7 +129,7 @@ class WebRtcService {
     if (_isPolling) return;
     _isPolling = true;
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
       if (!_isPolling) return;
       try {
         final res = await ApiClient.instance.get('/signal-poll/receive');
