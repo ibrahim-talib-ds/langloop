@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: langloop_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langloop
+      POSTGRES_PASSWORD: langloop_dev_pass
+      POSTGRES_DB: langloop_db
+    ports:
+      - "5433:5432"     # 5433 to avoid conflict with your local Postgres
+    volumes:
+      - langloop_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langloop"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: langloop_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"     # 6380 to avoid conflict if you later install redis locally
+    volumes:
+      - langloop_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  langloop_pgdata:
+  langloop_redisdata:
