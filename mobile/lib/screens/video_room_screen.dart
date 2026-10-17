@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
@@ -32,24 +31,22 @@ class VideoRoomScreen extends StatefulWidget {
 
 class _VideoRoomScreenState extends State<VideoRoomScreen> {
   CameraController? _cameraController;
-  WebSocketChannel? _channel;
   Timer? _frameTimer;
   Timer? _timer;
+  Timer? _receiveTimer;
   
   bool _camOn = true;
   bool _ending = false;
   bool _friendAdded = false;
   int _secondsLeft = 300;
-  
-  // Latest frame from partner
   String? _partnerFrame;
   
   @override
   void initState() {
     super.initState();
     _initCamera();
-    _connectWs();
     _startTimer();
+    _startReceiving();
   }
   
   Future<void> _initCamera() async {
@@ -59,7 +56,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
       
       _cameraController = CameraController(
         cameras.first,
-        ResolutionPreset.low, // low resolution for speed
+        ResolutionPreset.low,
         enableAudio: false,
       );
       await _cameraController!.initialize();
@@ -71,7 +68,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
   }
   
   void _startFrameLoop() {
-    _frameTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
+    _frameTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
       if (!_camOn || _cameraController == null) return;
       if (!_cameraController!.value.isInitialized) return;
       
@@ -80,36 +77,21 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
         final bytes = await picture.readAsBytes();
         final base64Str = base64Encode(bytes);
         
-        _channel?.sink.add(jsonEncode({
+        await ApiClient.instance.post('/video-poll/send', body: {
           'to': widget.partnerId,
           'image': base64Str,
-        }));
-        
-        // Delete the temp file to save space
+        });
       } catch (_) {}
     });
   }
   
-  void _connectWs() {
-    final token = ApiClient.instance.token;
-    if (token == null) return;
-    
-    final base = ApiClient.instance.baseUrl;
-    final wsUrl = base
-        .replaceFirst('https://', 'wss://')
-        .replaceFirst('http://', 'ws://')
-        .replaceFirst('/api/v1', '');
-        
-    final myId = AuthService.instance.user?['id'];
-    final url = '$wsUrl/api/v1/video-stream/ws/$myId';
-    
-    _channel = WebSocketChannel.connect(Uri.parse(url));
-    _channel!.stream.listen((msg) {
+  void _startReceiving() {
+    _receiveTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
       try {
-        final data = jsonDecode(msg);
-        if (data['image'] != null) {
+        final res = await ApiClient.instance.get('/video-poll/receive');
+        if (res['image'] != null) {
           setState(() {
-            _partnerFrame = data['image'];
+            _partnerFrame = res['image'];
           });
         }
       } catch (_) {}
@@ -135,8 +117,8 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
     setState(() => _ending = true);
     _timer?.cancel();
     _frameTimer?.cancel();
+    _receiveTimer?.cancel();
     try { await AuthService.instance.endMatch(widget.matchId); } catch (_) {}
-    _channel?.sink.close();
     await _cameraController?.dispose();
     
     if (!mounted) return;
@@ -155,20 +137,18 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
   void dispose() {
     _timer?.cancel();
     _frameTimer?.cancel();
-    _channel?.sink.close();
+    _receiveTimer?.cancel();
     _cameraController?.dispose();
     super.dispose();
   }
   
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Stack(
           children: [
-            // Partner video (large)
             Positioned.fill(
               child: _partnerFrame != null
                   ? Image.memory(
@@ -184,17 +164,15 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                           children: [
                             AvatarCircle(name: widget.partnerName, size: 100),
                             const SizedBox(height: 20),
-                            Text(
+                            const Text(
                               'Connecting video...',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                              style: TextStyle(color: Colors.white54),
                             ),
                           ],
                         ),
                       ),
                     ),
             ),
-            
-            // My small camera preview
             Positioned(
               right: 16,
               bottom: 130,
@@ -203,7 +181,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                 height: 160,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                  border: Border.all(color: Colors.white30),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: _camOn && _cameraController != null && _cameraController!.value.isInitialized
@@ -214,8 +192,6 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                       ),
               ),
             ),
-            
-            // Top bar
             Positioned(
               top: 16, left: 16, right: 16,
               child: Row(
@@ -234,8 +210,6 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                 ],
               ),
             ),
-            
-            // Controls
             Positioned(
               bottom: 30, left: 0, right: 0,
               child: Row(
