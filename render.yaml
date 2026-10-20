@@ -1,40 +1,9 @@
 services:
   - type: web
-    name: langloop-backend
-    runtime: python
-    plan: free
-    region: frankfurt
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.3
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: ADMIN_EMAIL
-        sync: false
-      - key: ADMIN_PASSWORD
-        sync: false
-      - key: ADMIN_USERNAME
-        sync: false
-      - key: ALGORITHM
-        value: HS256
-      - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "10080"
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: PADDLE_API_KEY
-        sync: false
-      - key: PADDLE_WEBHOOK_SECRET
-        sync: false
-      - key: PADDLE_ENV
-        value: production
-      - key: PADDLE_PRICE_PLUS
-        sync: false
-      - key: PADDLE_PRICE_PRO
-        sync: false
+    name: langloop-app
+    env: static
+    staticPublishPath: ./mobile/build/web
+    headers:
+      - path: /assets/packages/zego_express_engine_for_uikit/assets/ZegoExpressWebFlutterWrapper.js
+        name: Content-Type
+        value: application/javascript
