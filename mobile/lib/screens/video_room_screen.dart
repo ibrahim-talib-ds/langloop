@@ -159,7 +159,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
     if (!_engineCreated) return;
 
     if (_myStreamID != null) {
-      ZegoExpressEngine.instance.stopPublishingStream(_myStreamID!);
+      ZegoExpressEngine.instance.stopPublishingStream();
     }
     ZegoExpressEngine.instance.stopPreview();
 
