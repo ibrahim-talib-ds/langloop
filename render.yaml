@@ -4,6 +4,6 @@ services:
     env: static
     staticPublishPath: ./mobile/build/web
     headers:
-      - path: /assets/packages/zego_express_engine_for_uikit/assets/ZegoExpressWebFlutterWrapper.js
+      - path: /assets/packages/zego_express_engine/assets/ZegoExpressWebFlutterWrapper.js
         name: Content-Type
         value: application/javascript
