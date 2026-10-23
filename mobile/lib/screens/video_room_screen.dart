@@ -4,6 +4,7 @@ import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/auth_service.dart';
+import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/app_icons.dart';
@@ -30,7 +31,6 @@ class VideoRoomScreen extends StatefulWidget {
 
 class _VideoRoomScreenState extends State<VideoRoomScreen> {
   final String appId = "362ac9b730a2499199766380f58eecc6";
-  final String token = "007eJxTYPhzPfrDW3vRM8u36QfdOMynd/CZlU3YtcM73FM/GH5z61mtwGBsZpSYbJlkbmyQaGRiaWloaWluZmZsYZBmapGampxs1rr5dlZDICPD+to0FkYGCATxuRlKUotLkjMS8/JScxgYAAhaJMs=";
 
   late final RtcEngine _engine;
   int? _remoteUid;
@@ -56,8 +56,8 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
     await [Permission.microphone, Permission.camera].request();
 
     _engine = createAgoraRtcEngine();
-    await _engine.initialize(const RtcEngineContext(
-      appId: "362ac9b730a2499199766380f58eecc6",
+    await _engine.initialize(RtcEngineContext(
+      appId: appId,
       channelProfile: ChannelProfileType.channelProfileCommunication,
     ));
 
@@ -70,7 +70,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
           if (mounted) setState(() => _remoteUid = remoteUid);
         },
         onUserOffline: (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
-          if (mounted) { setState(() => _remoteUid = null); }
+          if (mounted) { setState(() => _remoteUid = null); _endMatch(); }
         },
       ),
     );
@@ -78,21 +78,32 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
     await _engine.enableVideo();
     await _engine.startPreview();
 
+    // Get the token from our FastAPI backend
     final channelId = _sanitize(widget.matchId);
     final uid = DateTime.now().millisecondsSinceEpoch % 100000;
 
-    await _engine.joinChannel(
-      token: token,
-      channelId: channelId,
-      uid: uid,
-      options: const ChannelMediaOptions(
-        clientRoleType: ClientRoleType.clientRoleBroadcaster,
-        autoSubscribeAudio: true,
-        autoSubscribeVideo: true,
-        publishCameraTrack: true,
-        publishMicrophoneTrack: true,
-      ),
-    );
+    try {
+      final res = await ApiClient.instance.post('/video/token', body: {
+        'channelName': channelId,
+        'uid': uid,
+      });
+      final token = res['token'] as String;
+
+      await _engine.joinChannel(
+        token: token,
+        channelId: channelId,
+        uid: uid,
+        options: const ChannelMediaOptions(
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+          autoSubscribeAudio: true,
+          autoSubscribeVideo: true,
+          publishCameraTrack: true,
+          publishMicrophoneTrack: true,
+        ),
+      );
+    } catch (e) {
+      print("Agora Join Error: $e");
+    }
   }
 
   void _startTimer() {
