@@ -39,6 +39,7 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
   bool _camOn = true;
   bool _friendAdded = false;
   bool _connecting = true;
+  String? _errorMsg;
 
   int _secondsLeft = 300;
   Timer? _timer;
@@ -103,6 +104,10 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
       );
     } catch (e) {
       print("Agora Join Error: $e");
+      if (mounted) setState(() {
+        _connecting = false;
+        _errorMsg = e.toString();
+      });
     }
   }
 
@@ -172,7 +177,13 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                             const SizedBox(height: 20),
                             if (_connecting) const CircularProgressIndicator(color: Colors.white),
                             const SizedBox(height: 20),
-                            Text(_connecting ? 'Connecting...' : 'Waiting for partner...', style: const TextStyle(color: Colors.white54)),
+                            if (_errorMsg != null)
+                              Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Text('Error: $_errorMsg', textAlign: TextAlign.center, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                              )
+                            else
+                              Text(_connecting ? 'Connecting...' : 'Waiting for partner...', style: const TextStyle(color: Colors.white54)),
                           ],
                         ),
                       ),
