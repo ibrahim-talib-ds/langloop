@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:zego_express_engine/zego_express_engine.dart';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
 import '../widgets/app_icons.dart';
 import '../widgets/home_widgets.dart';
 import 'rating_screen.dart';
@@ -27,98 +29,70 @@ class VideoRoomScreen extends StatefulWidget {
 }
 
 class _VideoRoomScreenState extends State<VideoRoomScreen> {
-  // TODO: Replace with your actual AppID and AppSign
-  final int appID = 0;
-  final String appSign = "YOUR_APP_SIGN";
+  final String appId = "362ac9b730a2499199766380f58eecc6";
+  final String token = "007eJxTYPhzPfrDW3vRM8u36QfdOMynd/CZlU3YtcM73FM/GH5z61mtwGBsZpSYbJlkbmyQaGRiaWloaWluZmZsYZBmapGampxs1rr5dlZDICPD+to0FkYGCATxuRlKUotLkjMS8/JScxgYAAhaJMs=";
 
-  bool _engineCreated = false;
-  bool _camOn = true;
+  late final RtcEngine _engine;
+  int? _remoteUid;
+  bool _localUserJoined = false;
   bool _micOn = true;
+  bool _camOn = true;
+  bool _friendAdded = false;
+  bool _connecting = true;
+
   int _secondsLeft = 300;
   Timer? _timer;
 
-  Widget? _localView;
-  int? _localViewID;
-  Widget? _remoteView;
-  int? _remoteViewID;
-
-  String? _myStreamID;
+  String _sanitize(String raw) => raw.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
 
   @override
   void initState() {
     super.initState();
-    _initZego();
+    _initAgora();
     _startTimer();
   }
 
-  Future<void> _initZego() async {
-    // 1. Set global event listeners BEFORE creating engine
-    ZegoExpressEngine.onRoomStreamUpdate = (roomID, updateType, streamList, extendedData) {
-      if (streamList.isNotEmpty) {
-        _startPlaying(streamList.first.streamID);
-      }
-    };
+  Future<void> _initAgora() async {
+    await [Permission.microphone, Permission.camera].request();
 
-    // 2. Create engine
-    await ZegoExpressEngine.createEngineWithProfile(
-      ZegoEngineProfile(
-        appID,
-        ZegoScenario.Default,
-        appSign: appSign,
+    _engine = createAgoraRtcEngine();
+    await _engine.initialize(const RtcEngineContext(
+      appId: "362ac9b730a2499199766380f58eecc6",
+      channelProfile: ChannelProfileType.channelProfileCommunication,
+    ));
+
+    _engine.registerEventHandler(
+      RtcEngineEventHandler(
+        onJoinChannelSuccess: (RtcConnection connection, int elapsed) {
+          if (mounted) setState(() { _localUserJoined = true; _connecting = false; });
+        },
+        onUserJoined: (RtcConnection connection, int remoteUid, int elapsed) {
+          if (mounted) setState(() => _remoteUid = remoteUid);
+        },
+        onUserOffline: (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
+          if (mounted) { setState(() => _remoteUid = null); }
+        },
       ),
     );
-    _engineCreated = true;
 
-    // 3. Login room
-    final me = AuthService.instance.user;
-    final myId = me?['id'] as String? ?? 'unknown';
-    final myName = me?['full_name'] ?? 'User';
+    await _engine.enableVideo();
+    await _engine.startPreview();
 
-    await ZegoExpressEngine.instance.loginRoom(
-      widget.matchId,
-      ZegoUser(myId, myName),
+    final channelId = _sanitize(widget.matchId);
+    final uid = DateTime.now().millisecondsSinceEpoch % 100000;
+
+    await _engine.joinChannel(
+      token: token,
+      channelId: channelId,
+      uid: uid,
+      options: const ChannelMediaOptions(
+        clientRoleType: ClientRoleType.clientRoleBroadcaster,
+        autoSubscribeAudio: true,
+        autoSubscribeVideo: true,
+        publishCameraTrack: true,
+        publishMicrophoneTrack: true,
+      ),
     );
-
-    // 4. Start local preview
-    await _startLocalPreview(myId);
-
-    // 5. Start publishing
-    _myStreamID = 'stream_$myId';
-    await ZegoExpressEngine.instance.startPublishingStream(_myStreamID!);
-
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _startLocalPreview(String myId) async {
-    final canvasWidget = await ZegoExpressEngine.instance.createCanvasView((viewID) {
-      _localViewID = viewID;
-      ZegoExpressEngine.instance.startPreview(
-        canvas: ZegoCanvas(viewID, viewMode: ZegoViewMode.AspectFill),
-      );
-    });
-
-    if (mounted) {
-      setState(() => _localView = canvasWidget);
-    }
-  }
-
-  Future<void> _startPlaying(String streamID) async {
-    if (_remoteViewID != null) {
-      await ZegoExpressEngine.instance.destroyCanvasView(_remoteViewID!);
-      _remoteViewID = null;
-    }
-
-    final canvasWidget = await ZegoExpressEngine.instance.createCanvasView((viewID) {
-      _remoteViewID = viewID;
-      ZegoExpressEngine.instance.startPlayingStream(
-        streamID,
-        canvas: ZegoCanvas(viewID, viewMode: ZegoViewMode.AspectFill),
-      );
-    });
-
-    if (mounted) {
-      setState(() => _remoteView = canvasWidget);
-    }
   }
 
   void _startTimer() {
@@ -137,11 +111,9 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
 
   Future<void> _endMatch() async {
     _timer?.cancel();
-    try {
-      await AuthService.instance.endMatch(widget.matchId);
-    } catch (_) {}
-
-    await _cleanupZego();
+    try { await AuthService.instance.endMatch(widget.matchId); } catch (_) {}
+    await _engine.leaveChannel();
+    await _engine.release();
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -155,30 +127,11 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
     );
   }
 
-  Future<void> _cleanupZego() async {
-    if (!_engineCreated) return;
-
-    if (_myStreamID != null) {
-      ZegoExpressEngine.instance.stopPublishingStream();
-    }
-    ZegoExpressEngine.instance.stopPreview();
-
-    if (_localViewID != null) {
-      await ZegoExpressEngine.instance.destroyCanvasView(_localViewID!);
-    }
-    if (_remoteViewID != null) {
-      await ZegoExpressEngine.instance.destroyCanvasView(_remoteViewID!);
-    }
-
-    await ZegoExpressEngine.instance.logoutRoom(widget.matchId);
-    await ZegoExpressEngine.destroyEngine();
-    _engineCreated = false;
-  }
-
   @override
   void dispose() {
     _timer?.cancel();
-    _cleanupZego();
+    _engine.leaveChannel();
+    _engine.release();
     super.dispose();
   }
 
@@ -190,41 +143,48 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: _remoteView ??
-                  Container(
-                    color: const Color(0xFF0A0F08),
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          AvatarCircle(name: widget.partnerName, size: 100),
-                          const SizedBox(height: 20),
-                          const Text(
-                            'Waiting for partner video...',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        ],
+              child: _remoteUid != null
+                  ? AgoraVideoView(
+                      controller: VideoViewController.remote(
+                        rtcEngine: _engine,
+                        canvas: VideoCanvas(uid: _remoteUid),
+                        connection: RtcConnection(channelId: _sanitize(widget.matchId)),
+                      ),
+                    )
+                  : Container(
+                      color: const Color(0xFF0A0F08),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            AvatarCircle(name: widget.partnerName, size: 100),
+                            const SizedBox(height: 20),
+                            if (_connecting) const CircularProgressIndicator(color: Colors.white),
+                            const SizedBox(height: 20),
+                            Text(_connecting ? 'Connecting...' : 'Waiting for partner...', style: const TextStyle(color: Colors.white54)),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
             ),
             Positioned(
-              right: 16,
-              bottom: 130,
+              right: 16, bottom: 130,
               child: Container(
-                width: 120,
-                height: 160,
+                width: 120, height: 160,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white30),
+                  color: const Color(0xFF141A12),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: _camOn && _localView != null
-                    ? _localView!
-                    : Container(
-                        color: const Color(0xFF141A12),
-                        child: const Icon(Icons.videocam_off, color: Colors.white54),
-                      ),
+                child: _camOn && _localUserJoined
+                    ? AgoraVideoView(
+                        controller: VideoViewController(
+                          rtcEngine: _engine,
+                          canvas: const VideoCanvas(uid: 0),
+                        ),
+                      )
+                    : const Center(child: Icon(Icons.videocam_off, color: Colors.white54, size: 40)),
               ),
             ),
             Positioned(
@@ -237,10 +197,35 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
                     decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
                     child: Text(widget.topic, style: const TextStyle(color: Colors.white)),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-                    child: Text(_mmss, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Row(
+                    children: [
+                      if (!_friendAdded)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Material(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(20),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(20),
+                              onTap: () async {
+                                try {
+                                  await AuthService.instance.requestFriend(widget.partnerId);
+                                  setState(() => _friendAdded = true);
+                                } catch (_) {}
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                child: Text('+ Friend', style: TextStyle(color: Colors.white, fontSize: 12)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                        child: Text(_mmss, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -250,21 +235,15 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _ctrl(
-                    icon: _micOn ? AppIcons.mic : AppIcons.micOff,
-                    onTap: () {
-                      setState(() => _micOn = !_micOn);
-                      ZegoExpressEngine.instance.muteMicrophone(!_micOn);
-                    },
-                  ),
+                  _ctrl(icon: _micOn ? AppIcons.mic : AppIcons.micOff, onTap: () {
+                    setState(() => _micOn = !_micOn);
+                    _engine.muteLocalAudioStream(!_micOn);
+                  }),
                   const SizedBox(width: 16),
-                  _ctrl(
-                    icon: _camOn ? AppIcons.video : AppIcons.cameraOff,
-                    onTap: () {
-                      setState(() => _camOn = !_camOn);
-                      ZegoExpressEngine.instance.enableCamera(_camOn);
-                    },
-                  ),
+                  _ctrl(icon: _camOn ? AppIcons.video : AppIcons.cameraOff, onTap: () {
+                    setState(() => _camOn = !_camOn);
+                    _engine.muteLocalVideoStream(!_camOn);
+                  }),
                   const SizedBox(width: 16),
                   _ctrl(icon: AppIcons.callEnd, danger: true, big: true, onTap: _endMatch),
                 ],
@@ -278,14 +257,13 @@ class _VideoRoomScreenState extends State<VideoRoomScreen> {
 
   Widget _ctrl({required IconData icon, required VoidCallback onTap, bool danger = false, bool big = false}) {
     return Material(
-      color: danger ? Colors.red : Colors.white24,
+      color: danger ? AppPalette.danger : Colors.white24,
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onTap,
         child: Container(
-          width: big ? 68 : 58,
-          height: big ? 68 : 58,
+          width: big ? 68 : 58, height: big ? 68 : 58,
           child: Icon(icon, color: Colors.white, size: big ? 28 : 24),
         ),
       ),
