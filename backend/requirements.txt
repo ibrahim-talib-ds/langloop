@@ -31,3 +31,5 @@ httpx>=0.27
 paddle-python-sdk>=1.0.0
 
 cloudinary
+
+agora-token-builder
