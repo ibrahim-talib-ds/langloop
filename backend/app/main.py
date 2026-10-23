@@ -14,6 +14,7 @@ from app.api.v1 import billing as billing_router
 from app.api.v1 import geo as geo_router
 from app.api.v1 import friends as friends_router
 from app.api.v1 import match as match_router
+from app.api.v1 import video as video_router
 from app.api.v1 import video_poll as video_poll_router
 from app.api.v1 import video_stream as video_router
 from app.api.v1 import ws_fallback as signal_poll_router
@@ -97,6 +98,7 @@ app.include_router(users_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_activity_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(match_router.router, prefix=settings.API_V1_PREFIX)
+app.include_router(video_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(video_poll_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(video_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(signal_poll_router.router, prefix=settings.API_V1_PREFIX)
